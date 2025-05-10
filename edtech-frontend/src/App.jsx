@@ -28,16 +28,22 @@ const PaymentFailed = lazy(() => import('./payments/PaymentFailed'));
 const Programs = lazy(() => import('./pages/Programs'));
 const ProgramDetail = lazy(() => import('./pages/ProgramDetail'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Profile = lazy(() => import('./pages/Profile'));
+const Learn = lazy(() => import('./pages/Learn'));
 
-// Educator Components (now properly organized)
+// Educator Components
 const EducatorAdmin = lazy(() => import('./Admins/EducatorAdmin'));
 const EducatorDashboard = lazy(() => import('./Admins/EducatorDashboard'));
-const EducatorUpload = lazy(() => import('./Admins/EducatorUpload'));
 const EducatorPendingApproval = lazy(() => import('./pages/PendingApproval'));
 const EducatorAnalytics = lazy(() => import('./Admins/EducatorAnalytics'));
 const EducatorSettings = lazy(() => import('./Admins/EducatorSettings'));
 const ContentList = lazy(() => import('./Admins/ContentList'));
 const ContentStats = lazy(() => import('./Admins/ContentStats'));
+
+// New Content Upload Flow
+const ModuleUploadPage = lazy(() => import('./Admins/ModuleUpload'));
+const TopicManagementPage = lazy(() => import('./Admins/TopicManagement'));
+const AssessmentCreationPage = lazy(() => import('./Admins/AssessmentCreate'));
 
 // Admin Components
 const AdminEducatorApproval = lazy(() => import('./pages/AdminEdApproval'));
@@ -75,19 +81,33 @@ function AppContent() {
             {/* Protected Routes */}
             <Route element={<PrivateRoute />}>
               <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/learn" element={<Learn />} />
             </Route>
 
             {/* Educator Routes */}
             <Route element={<EducatorRoute />}>
               <Route path="/educator" element={<EducatorAdmin />}>
+                {/* Dashboard */}
                 <Route index element={<EducatorDashboard />} />
                 <Route path="dashboard" element={<EducatorDashboard />} />
+                
+                {/* New Content Upload Flow */}
+                <Route path="content/upload" element={<ModuleUploadPage />} />
+                <Route path="content/upload/topics" element={<TopicManagementPage />} />
+                <Route path="content/upload/assessments" element={<AssessmentCreationPage />} />
+                
+                {/* Content Management */}
                 <Route path="content/list" element={<ContentList />} />
-                <Route path="content/upload" element={<EducatorUpload />} />
-                <Route path="content/edit/:id" element={<EducatorUpload mode="edit" />} />
+                
+                {/* Analytics */}
                 <Route path="analytics" element={<EducatorAnalytics />} />
                 <Route path="stats" element={<ContentStats />} />
+                
+                {/* Settings */}
                 <Route path="settings" element={<EducatorSettings />} />
+                
+                {/* Approval Status */}
                 <Route path="pending" element={<EducatorPendingApproval />} />
               </Route>
             </Route>

@@ -6,7 +6,9 @@ from .views import (
     UserViewSet, QuestionViewSet, ContentUploadViewSet, check_math_answer,
     RegisterView, LoginView, LogoutView, check_auth, get_csrf,
     CustomTokenObtainPairView,UserProfileView,
-    UserManagementAPIView, UserDetailAPIView, dashboard_view
+    UserManagementAPIView, UserDetailAPIView, dashboard_view,
+    MathWorkingsViewSet, MathProblemViewSet,
+    SubmitAnswerView
 )
 from rest_framework_simplejwt.views import (
     TokenRefreshView,TokenVerifyView
@@ -19,6 +21,8 @@ router.register(r'topics', TopicViewSet)
 router.register(r'resources', TopicResourceViewSet)
 router.register(r'assessments', AssessmentViewSet)
 router.register(r'users', UserViewSet)
+router.register(r'math-problems', MathProblemViewSet)
+router.register(r'math-workings', MathWorkingsViewSet)
 router.register(r'questions', QuestionViewSet)
 router.register(r'content-uploads', ContentUploadViewSet, basename='content-upload')
 
@@ -37,5 +41,6 @@ urlpatterns = [
     path('users/<int:pk>/', UserDetailAPIView.as_view(), name='user-detail'),
     path('profile/', UserProfileView.as_view(), name='user-profile'),
     path('user/dashboard/', dashboard_view, name='dashboard'),
-    
+    path('submit-answer/<int:question_id>/', SubmitAnswerView.as_view(), name='submit-answer'),
+
 ]

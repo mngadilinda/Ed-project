@@ -3,7 +3,10 @@ import {
   BookOpenIcon, 
   DocumentPlusIcon, 
   ChartBarIcon,
-  AcademicCapIcon
+  AcademicCapIcon,
+  ClipboardDocumentListIcon,
+  Cog6ToothIcon,
+  ClockIcon
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../context/AuthContext';
 
@@ -33,7 +36,7 @@ export default function EducatorAdmin() {
 
         {/* Tab Navigation */}
         <div className="mb-8 border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8">
+          <nav className="-mb-px flex space-x-8 overflow-x-auto">
             <button
               onClick={() => navigate('/educator/dashboard')}
               className={`${activeTab === 'dashboard' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
@@ -42,10 +45,17 @@ export default function EducatorAdmin() {
               Dashboard
             </button>
             <button
-              onClick={() => navigate('/educator/content/list')}
-              className={`${activeTab === 'content' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
+              onClick={() => navigate('/educator/content/upload')}
+              className={`${activeTab.includes('upload') ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
             >
               <DocumentPlusIcon className="h-5 w-5" />
+              Upload Content
+            </button>
+            <button
+              onClick={() => navigate('/educator/content/list')}
+              className={`${activeTab === 'list' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
+            >
+              <ClipboardDocumentListIcon className="h-5 w-5" />
               My Content
             </button>
             <button
@@ -54,6 +64,13 @@ export default function EducatorAdmin() {
             >
               <ChartBarIcon className="h-5 w-5" />
               Analytics
+            </button>
+            <button
+              onClick={() => navigate('/educator/settings')}
+              className={`${activeTab === 'settings' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
+            >
+              <Cog6ToothIcon className="h-5 w-5" />
+              Settings
             </button>
           </nav>
         </div>

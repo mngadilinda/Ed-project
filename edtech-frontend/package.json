@@ -24,7 +24,7 @@
     "date-fns": "^4.1.0",
     "firebase": "^11.6.0",
     "framer-motion": "^12.6.3",
-    "katex": "^0.16.21",
+    "katex": "^0.16.22",
     "mathjax": "^3.2.2",
     "mathquill": "^0.10.1-a",
     "react": "^19.0.0",

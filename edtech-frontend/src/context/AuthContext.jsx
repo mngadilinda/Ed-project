@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { setAuthTokenHandler } from '../services/api'
+
 
 export const AuthContext = createContext();
 
@@ -8,24 +10,33 @@ export const AuthProvider = ({ children }) => {
   const [state, setState] = useState({
     user: null,
     accessToken: null,
-    isLoading: true, // Start with loading true
-    authChecked: false
+    isLoading: false,
+    authChecked: false,
+    error: null // Added error state
   });
 
   const isMounted = useRef(true);
   const navigate = useNavigate();
   const location = useLocation();
+  const initialized = useRef(false);
+  const retryCount = useRef(0); // Track retry attempts
 
-  // Stable API instance with CSRF handling
+  // Stable API instance
   const api = useRef(
     axios.create({
       baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
-      withCredentials: true,
-      headers: {
-        'Content-Type': 'application/json',
-      }
+      withCredentials: true
     })
   ).current;
+
+  useEffect(() => {
+    setAuthTokenHandler({
+      getAccessToken: () => {
+        // Return the current token from your auth state
+        return localStorage.getItem('accessToken') || null;
+      }
+    });
+  }, []);
 
   // Safe state updater
   const updateAuth = useCallback((updates) => {
@@ -34,39 +45,42 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  // Handle auth success - simplified and more robust
-  const handleAuthSuccess = useCallback(async (authData) => {
+  // Handle auth success
+  const handleAuthSuccess = useCallback(async ({ access, refresh, user }) => {
     if (!isMounted.current) return;
-
-    const { access, refresh, user } = authData;
-    if (!access) {
-      throw new Error('Authentication failed: No access token received');
-    }
 
     const userData = {
       ...user,
-      initials: (user?.first_name?.[0] || user?.email?.[0] || '?').toUpperCase()
+      initials: (user.first_name?.[0] || user.email?.[0] || '?').toUpperCase()
     };
 
-    // Store tokens and user data
     localStorage.setItem('accessToken', access);
-    if (refresh) {
-      localStorage.setItem('refreshToken', refresh);
-    }
+    if (refresh) localStorage.setItem('refreshToken', refresh);
     localStorage.setItem('user', JSON.stringify(userData));
 
-    // Set default auth header
     api.defaults.headers.common['Authorization'] = `Bearer ${access}`;
+    retryCount.current = 0; // Reset retry counter on success
 
-    updateAuth({
-      user: userData,
-      accessToken: access,
-      authChecked: true,
-      isLoading: false
-    });
-
-    // Navigate after state update
-    navigate(location.state?.from?.pathname || '/dashboard', { replace: true });
+    try {
+      await api.post('/auth/verify/', { token: access });
+      updateAuth({
+        user: userData,
+        accessToken: access,
+        authChecked: true,
+        isLoading: false,
+        error: null
+      });
+      
+      navigate(location.state?.from?.pathname || '/dashboard', { replace: true });
+    } catch (error) {
+      if (isMounted.current) {
+        updateAuth({ 
+          isLoading: false,
+          error: 'Session verification failed'
+        });
+      }
+      throw error;
+    }
   }, [api, navigate, updateAuth, location.state]);
 
   // Register function
@@ -74,202 +88,168 @@ export const AuthProvider = ({ children }) => {
     if (!isMounted.current) return;
     
     try {
-      updateAuth({ isLoading: true });
+      updateAuth({ isLoading: true, error: null });
       const { data } = await api.post('/auth/register/', userData);
       await handleAuthSuccess(data);
       return data;
     } catch (error) {
-      updateAuth({ isLoading: false });
+      if (isMounted.current) {
+        updateAuth({ 
+          isLoading: false,
+          error: error.response?.data?.detail || 'Registration failed'
+        });
+      }
       throw error;
     }
   };
 
-  // Login function - more robust with error handling
+  // Login function with 401 handling
   const login = async (credentials) => {
     if (!isMounted.current) return;
     
     try {
-      updateAuth({ isLoading: true });
-      
-      // Clear previous tokens
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
-      delete api.defaults.headers.common['Authorization'];
-
+      updateAuth({ isLoading: true, error: null });
       const { data } = await api.post('/auth/login/', credentials);
-      
-      if (!data.access) {
-        throw new Error('Login failed: No access token in response');
-      }
-
       await handleAuthSuccess(data);
-      return data;
     } catch (error) {
-      // Clean up on failure
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
-      localStorage.removeItem('user');
-      delete api.defaults.headers.common['Authorization'];
-      
-      updateAuth({
-        user: null,
-        accessToken: null,
-        isLoading: false,
-        authChecked: true
-      });
-
+      if (isMounted.current) {
+        const errorMessage = error.response?.status === 401
+          ? 'Invalid email or password'
+          : error.response?.data?.detail || 'Login failed';
+        
+        updateAuth({ 
+          isLoading: false,
+          error: errorMessage
+        });
+      }
       throw error;
     }
   };
 
-  // Logout function - more resilient
+  // Logout function
   const logout = useCallback(async () => {
+    if (!isMounted.current) return;
+
     try {
-      // Get the refresh token before we remove it
-      const refreshToken = localStorage.getItem('refreshToken');
-      
-      // Clear frontend state immediately
+      updateAuth({ isLoading: true });
+      try {
+        await api.post('/auth/logout/');
+      } catch (e) {
+        console.warn('Logout API error:', e);
+      }
+
       localStorage.removeItem('accessToken');
       localStorage.removeItem('refreshToken');
       localStorage.removeItem('user');
       delete api.defaults.headers.common['Authorization'];
-      
+      retryCount.current = 0; // Reset retry counter
+
       updateAuth({
         user: null,
         accessToken: null,
         isLoading: false,
-        authChecked: true
+        authChecked: true,
+        error: null
       });
-  
-      // Only attempt backend logout if we have a refresh token
-      if (refreshToken) {
-        try {
-          await api.post('/auth/logout/', { refresh: refreshToken });
-        } catch (err) {
-          console.warn('Logout API error:', err);
-          // Even if backend logout fails, continue with frontend logout
-        }
-      }
-  
+
       navigate('/login');
     } catch (error) {
-      console.error('Logout error:', error);
-      // Ensure we always clear local state even if something fails
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
-      localStorage.removeItem('user');
-      delete api.defaults.headers.common['Authorization'];
-      navigate('/login');
+      if (isMounted.current) {
+        updateAuth({ isLoading: false });
+      }
     }
   }, [api, navigate, updateAuth]);
 
-  // Initial auth check - simplified
+  // Initial auth check with retry limit
   const checkAuth = useCallback(async () => {
-    if (!isMounted.current || state.authChecked) return;
+    if (!isMounted.current || initialized.current) return;
+    initialized.current = true;
 
     const accessToken = localStorage.getItem('accessToken');
     const user = JSON.parse(localStorage.getItem('user') || 'null');
 
     if (!accessToken || !user) {
-      return updateAuth({
-        user: null,
-        accessToken: null,
-        authChecked: true,
-        isLoading: false
+      return updateAuth({ 
+        user: null, 
+        accessToken: null, 
+        authChecked: true, 
+        isLoading: false 
       });
     }
 
     try {
+      updateAuth({ isLoading: true });
       api.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
       
-      // Simple verification request
-      await api.get('/auth/check/');
+      await api.post('/auth/verify/', { token: accessToken });
       
       updateAuth({
-        user: user,
-        accessToken: accessToken,
+        user: {
+          ...user,
+          initials: (user.first_name?.[0] || user.email?.[0] || '?').toUpperCase()
+        },
+        accessToken,
         authChecked: true,
-        isLoading: false
+        isLoading: false,
+        error: null
       });
     } catch (error) {
-      // If verification fails, logout
-      await logout();
+      if (isMounted.current) {
+        await logout();
+      }
     }
-  }, [api, logout, state.authChecked, updateAuth]);
+  }, [api, updateAuth, logout]);
 
-  // Response interceptor for token refresh
-  const setupInterceptors = useCallback(() => {
-    return api.interceptors.response.use(
+  // Response interceptor with retry limits
+  useEffect(() => {
+    isMounted.current = true;
+    checkAuth();
+
+    const interceptor = api.interceptors.response.use(
       response => response,
       async error => {
         if (!isMounted.current) return Promise.reject(error);
 
         const originalRequest = error.config;
         
-        // Skip interception for auth endpoints
-        if (originalRequest.url.includes('/auth/')) {
-          return Promise.reject(error);
-        }
-        
-        // Handle 401 errors
-        if (error.response?.status === 401 && !originalRequest._retry) {
+        // Only handle 401 errors and limit retries
+        if (error.response?.status === 401 && !originalRequest._retry && retryCount.current < 3) {
           originalRequest._retry = true;
-          
-          const refreshToken = localStorage.getItem('refreshToken');
-          if (!refreshToken) {
-            await logout();
-            return Promise.reject(new Error('Session expired'));
-          }
+          retryCount.current += 1;
           
           try {
+            const refreshToken = localStorage.getItem('refreshToken');
+            if (!refreshToken) throw new Error('No refresh token');
+            
             const { data } = await api.post('/auth/token/refresh/', { 
               refresh: refreshToken 
             });
             
-            if (!data.access) {
-              throw new Error('Invalid refresh response');
-            }
-            
             localStorage.setItem('accessToken', data.access);
-            api.defaults.headers.common['Authorization'] = `Bearer ${data.access}`;
             originalRequest.headers['Authorization'] = `Bearer ${data.access}`;
-            
             return api(originalRequest);
           } catch (refreshError) {
-            await logout();
+            if (isMounted.current) {
+              await logout();
+            }
             return Promise.reject(refreshError);
           }
+        }
+        
+        // Clear error if max retries reached
+        if (retryCount.current >= 3) {
+          updateAuth({ error: 'Session expired. Please login again.' });
         }
         
         return Promise.reject(error);
       }
     );
-  }, [api, logout]);
-
-  // Setup and cleanup
-  useEffect(() => {
-    isMounted.current = true;
-    
-    // Initial auth check
-    checkAuth();
-    
-    // Setup interceptors
-    const interceptor = setupInterceptors();
 
     return () => {
       isMounted.current = false;
       api.interceptors.response.eject(interceptor);
     };
-  }, [api, checkAuth, setupInterceptors]);
-
-  // Render loading state while initializing
-  if (state.isLoading) {
-    return (
-      <div className="flex justify-center items-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
+  }, [api, checkAuth, logout, updateAuth]);
 
   return (
     <AuthContext.Provider value={{
@@ -279,7 +259,7 @@ export const AuthProvider = ({ children }) => {
       login,
       logout,
       register,
-      updateAuth
+      clearError: () => updateAuth({ error: null }) // Method to clear errors
     }}>
       {children}
     </AuthContext.Provider>

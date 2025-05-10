@@ -43,14 +43,17 @@ export default function AppRoutes() {
           <EducatorAdmin />
         </PrivateRoute>
       }>
+
+        <Route path="content" element={<ContentList />} />
+        <Route path="content/upload" element={<ModuleUploadPage />} />
+        <Route path="content/upload/topics" element={<TopicManagementPage />} />
+        <Route path="content/upload/assessments" element={<AssessmentCreationPage />} />
         {/* Dashboard and Core Functionality */}
         <Route index element={<EducatorDashboard />} />
         <Route path="dashboard" element={<EducatorDashboard />} />
         
         {/* Content Management */}
-        <Route path="content" element={<EducatorContent />} />
         <Route path="content/list" element={<ContentList />} />
-        <Route path="content/upload" element={<EducatorUpload />} />
         <Route path="content/edit/:id" element={<EducatorUpload mode="edit" />} />
         
         {/* Analytics */}

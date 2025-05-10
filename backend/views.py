@@ -11,7 +11,9 @@ from django.middleware.csrf import get_token
 from .models import (
     Program, Module, Topic, TopicResource,
     Assessment, Question, UserProfile,
-    UserProgress, TestResult, ContentUpload
+    UserProgress, TestResult, ContentUpload,
+    Question, Answer,
+    MathProblem, MathWorkings
 )
 from .serializers import (
     ProgramSerializer, ModuleSerializer, TopicSerializer,
@@ -19,7 +21,11 @@ from .serializers import (
     QuestionSerializer, UserProfileSerializer,
     UserProgressSerializer, TestResultSerializer, ContentUploadSerializer,
     EducatorListSerializer, EducatorProfileSerializer,
-    UserRegisterSerializer, UserLoginSerializer
+    UserRegisterSerializer, UserLoginSerializer,
+    AnswerSubmissionSerializer, AnswerSerializer, AnswerWorkingSerializer,
+    MathWorkingsSerializer, MathProblemSerializer,
+    AnswerWithWorkingsSerializer
+
 )
 from django.contrib.auth.models import User
 from django.db.models import Sum, FloatField, F, Count, Q
@@ -52,12 +58,19 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from .services import process_content_upload, update_upload_status
 from django.core.cache import cache
 from concurrent.futures import ThreadPoolExecutor
+import tensorflow as tf
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+import numpy as np
+from .math_evaluator import MathAnswerEvaluator
 
 
 
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
+
+math_evaluator = MathAnswerEvaluator()
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
@@ -478,105 +491,33 @@ class ContentUploadViewSet(viewsets.ModelViewSet):
             )
 
 
+# New version using both SymPy and TensorFlow
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def check_math_answer(request):
+    data = request.data
+    evaluator = MathAnswerEvaluator()  # Your TensorFlow service
+    
     try:
-        data = request.data
-        user_answer = data.get('user_answer', '').strip()
-        problem_type = data.get('problem_type', '').lower()
-        correct_answer = data.get('correct_answer', '').strip()
-        variables = data.get('variables', {})  # Allow variable values from frontend
+        problem_text = data.get('problem_text', '')
+        user_workings = data.get('workings', [])
+        user_answer = data.get('user_answer', '')
         
-        if not user_answer or not correct_answer:
-            return Response({'error': 'Missing required fields'}, status=400)
-
-        # Initialize symbols with provided variable values
-        sympy_vars = {}
-        for var_name, var_value in variables.items():
-            sympy_vars[var_name] = symbols(var_name)
-            if var_value is not None:
-                sympy_vars[var_name] = var_value
-
-        # Pre-process answers
-        def preprocess_answer(answer):
-            # Handle common alternative representations
-            answer = answer.replace('^', '**')  # Handle caret exponentiation
-            answer = answer.replace('÷', '/').replace('×', '*')  # Alternative math symbols
-            return answer.strip()
+        # Evaluate using hybrid approach
+        result = evaluator.evaluate(problem_text, user_workings)
         
-        user_answer = preprocess_answer(user_answer)
-        correct_answer = preprocess_answer(correct_answer)
-
-        # Different checking methods with enhanced logic
-        if problem_type == 'expression':
-            user_expr = parse_expr(user_answer, local_dict=sympy_vars, transformations='all')
-            correct_expr = parse_expr(correct_answer, local_dict=sympy_vars, transformations='all')
-            
-            # Check equivalence with multiple methods for robustness
-            is_correct = (
-                simplify(user_expr - correct_expr) == 0 or
-                user_expr.equals(correct_expr) or
-                str(user_expr) == str(correct_expr)
+        # Additional symbolic check if needed
+        if user_answer:
+            symbolic_check = evaluator._symbolic_check(
+                user_answer, 
+                result['expected_answer']
             )
-            
-        elif problem_type == 'equation':
-            try:
-                # Handle both sides of equation
-                user_lhs, user_rhs = [parse_expr(part, local_dict=sympy_vars) 
-                                    for part in user_answer.split('=', 1)]
-                correct_lhs, correct_rhs = [parse_expr(part, local_dict=sympy_vars) 
-                                         for part in correct_answer.split('=', 1)]
-                
-                # Check equation equivalence
-                is_correct = (
-                    simplify(user_lhs - user_rhs) == simplify(correct_lhs - correct_rhs) or
-                    Eq(user_lhs, user_rhs).equals(Eq(correct_lhs, correct_rhs))
-                )
-            except ValueError:
-                return Response({'error': 'Equation must contain exactly one = sign'}, status=400)
-                
-        elif problem_type == 'numeric':
-            tolerance = float(data.get('tolerance', 0.01))
-            try:
-                user_num = float(parse_expr(user_answer, local_dict=sympy_vars).evalf())
-                correct_num = float(parse_expr(correct_answer, local_dict=sympy_vars).evalf())
-                is_correct = abs(user_num - correct_num) <= tolerance
-            except Exception as e:
-                return Response({'error': f'Numeric evaluation error: {str(e)}'}, status=400)
-                
-        else:
-            return Response({'error': 'Invalid problem type'}, status=400)
-            
-        # Provide detailed feedback
-        response_data = {
-            'correct': is_correct,
-            'user_answer': user_answer,
-            'expected_answer': correct_answer,
-            'problem_type': problem_type,
-            'evaluation_method': 'sympy'
-        }
+            result['symbolic_correct'] = symbolic_check
         
-        # Add symbolic form if different from input
-        if problem_type in ['expression', 'equation']:
-            try:
-                user_sym = str(parse_expr(user_answer, local_dict=sympy_vars))
-                correct_sym = str(parse_expr(correct_answer, local_dict=sympy_vars))
-                if user_sym != user_answer or correct_sym != correct_answer:
-                    response_data.update({
-                        'user_answer_symbolic': user_sym,
-                        'expected_answer_symbolic': correct_sym
-                    })
-            except:
-                pass
-                
-        return Response(response_data)
-        
+        return Response(result)
+    
     except Exception as e:
-        return Response({
-            'error': str(e),
-            'type': type(e).__name__
-        }, status=400)
+        return Response({'error': str(e)}, status=400)
     
 
 class IsApprovedEducator(BasePermission):
@@ -738,16 +679,14 @@ class UserDetailAPIView(APIView):
 
 class UserProfileView(APIView):
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request):
-        profile = request.user.profile
-        serializer = UserProfileSerializer(profile)
+        serializer = UserProfileSerializer(request.user)
         return Response(serializer.data)
-    
+
     def patch(self, request):
-        profile = request.user.profile
         serializer = UserProfileSerializer(
-            profile, 
+            request.user, 
             data=request.data, 
             partial=True
         )
@@ -866,3 +805,148 @@ def dashboard_view(request):
             {'error': 'Could not load dashboard data'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+    
+
+class SubmitAnswerView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, question_id):
+        question = get_object_or_404(Question, id=question_id)
+        serializer = AnswerWithWorkingsSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            with transaction.atomic():
+                answer = Answer.objects.create(
+                    user=request.user,
+                    question=question,
+                    response=serializer.validated_data['response'],
+                    is_correct=False  # Will be updated
+                )
+                
+                if 'workings' in serializer.validated_data:
+                    workings_data = serializer.validated_data['workings']
+                    workings = MathWorkings.objects.create(
+                        problem=question,
+                        steps=workings_data['steps'],
+                        answer=serializer.validated_data['response'],
+                        submitted_by=request.user
+                    )
+                    
+                    # Evaluate and update answer based on workings
+                    evaluation = math_evaluator.evaluate(
+                        question.text,
+                        workings.steps
+                    )
+                    answer.is_correct = evaluation['is_correct']
+                    answer.save()
+                    
+                    # Update workings with evaluation results
+                    workings.is_correct = evaluation['is_correct']
+                    workings.confidence = evaluation['score']
+                    workings.error_types = evaluation['errors']
+                    workings.feedback = self._generate_feedback(evaluation)
+                    workings.save()
+                
+                return Response(
+                    AnswerWithWorkingsSerializer(answer).data,
+                    status=status.HTTP_201_CREATED
+                )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class EnhancedWeaknessAnalysis(APIView):
+    def get(self, request):
+        user = request.user
+        test_results = TestResult.objects.filter(user=user)
+        
+        # Get all incorrect answers with concepts
+        incorrect_answers = []
+        for result in test_results:
+            for item in result.detailed_results:
+                if not item['is_correct']:
+                    incorrect_answers.append({
+                        'question': item['question_text'],
+                        'concepts': [c.strip() for c in item['concept'].split(',')]
+                    })
+        
+        if not incorrect_answers:
+            return Response({})
+        
+        # Enhanced analysis with TF
+        tokenizer = Tokenizer(num_words=1000)
+        questions = [item['question'] for item in incorrect_answers]
+        tokenizer.fit_on_texts(questions)
+        
+        sequences = tokenizer.texts_to_sequences(questions)
+        padded = pad_sequences(sequences, maxlen=50)
+        
+        # Load pre-trained concept classifier
+        concept_model = tf.keras.models.load_model('concept_classifier.h5')
+        predictions = concept_model.predict(padded)
+        
+        # Aggregate results
+        weakness_report = self._generate_report(incorrect_answers, predictions)
+        return Response(weakness_report)
+    
+    def _generate_report(self, answers, predictions):
+        """Generate enhanced weakness report"""
+        # Your reporting logic here
+        pass
+
+
+
+class MathProblemViewSet(viewsets.ModelViewSet):
+    queryset = MathProblem.objects.all()
+    serializer_class = MathProblemSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        grade = self.request.query_params.get('grade')
+        domain = self.request.query_params.get('domain')
+        
+        if grade:
+            queryset = queryset.filter(grade_level=grade)
+        if domain:
+            queryset = queryset.filter(domain=domain)
+            
+        return queryset
+
+class MathWorkingsViewSet(viewsets.ModelViewSet):
+    queryset = MathWorkings.objects.all()
+    serializer_class = MathWorkingsSerializer
+    permission_classes = [IsAuthenticated]
+
+    def perform_create(self, serializer):
+        workings = serializer.save(submitted_by=self.request.user)
+        
+        # Evaluate the workings
+        evaluation = math_evaluator.evaluate(
+            workings.problem.text,
+            workings.steps
+        )
+        
+        # Update with evaluation results
+        workings.is_correct = evaluation['is_correct']
+        workings.confidence = evaluation['score']
+        workings.error_types = evaluation['errors']
+        workings.feedback = self._generate_feedback(evaluation)
+        workings.save()
+
+    def _generate_feedback(self, evaluation):
+        if evaluation['is_correct']:
+            return "Your solution is correct!"
+        
+        feedback = "There are some issues with your solution:\n"
+        if 'sign_error' in evaluation['errors']:
+            feedback += "- Check your sign changes when moving terms\n"
+        if 'missing_step' in evaluation['errors']:
+            feedback += "- Some steps seem to be missing in your reasoning\n"
+        
+        return feedback
+
+
+
+
+

@@ -32,7 +32,7 @@ const Navbar = () => {
 
   const navLinks = [
     { name: 'Learn', path: '/learn', protected: true },
-    { name: 'Pricing', path: '/pricing', protected: false },
+    // { name: 'Pricing', path: '/pricing', protected: false },
     { name: 'Dashboard', path: '/dashboard', protected: true },
   ];
 

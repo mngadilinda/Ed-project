@@ -2,7 +2,9 @@ from rest_framework import serializers
 from .models import (
     Program, Module, Topic, TopicResource,
     Assessment, Question, UserProfile,
-    UserProgress, TestResult, ContentUpload
+    UserProgress, TestResult, ContentUpload,
+    Answer, AnswerWorking,
+    MathProblem, MathWorkings
 )
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import User
@@ -10,6 +12,7 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.utils import timezone
 from django.urls import reverse
+
 
 
 User = get_user_model()
@@ -313,4 +316,92 @@ class UserProfileSerializer(serializers.ModelSerializer):
         if value and value < timezone.now().date():
             raise serializers.ValidationError("Expiry date cannot be in the past")
         return value
+
+
+
+class AnswerWorkingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnswerWorking
+        fields = ['step_number', 'content', 'created_at']
+        read_only_fields = ['created_at']
+
+class AnswerSerializer(serializers.ModelSerializer):
+    workings = AnswerWorkingSerializer(many=True, required=False)
     
+    class Meta:
+        model = Answer
+        fields = [
+            'id', 
+            'user', 
+            'question', 
+            'response', 
+            'is_correct', 
+            'submitted_at',
+            'workings'
+        ]
+        read_only_fields = ['id', 'user', 'is_correct', 'submitted_at']
+
+    def create(self, validated_data):
+        workings_data = validated_data.pop('workings', [])
+        answer = Answer.objects.create(**validated_data)
+        
+        for idx, working_data in enumerate(workings_data):
+            AnswerWorking.objects.create(
+                answer=answer,
+                step_number=idx+1,
+                **working_data
+            )
+        
+        return answer
+
+class AnswerSubmissionSerializer(serializers.Serializer):
+    response = serializers.CharField(required=True)
+    workings = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=[]
+    )
+    
+    def validate(self, data):
+        """Optional: Add custom validation for math expressions"""
+        if 'workings' in data:
+            for step in data['workings']:
+                if len(step) > 1000:
+                    raise serializers.ValidationError(
+                        "Each working step must be under 1000 characters"
+                    )
+        return data
+
+class MathProblemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MathProblem
+        fields = '__all__'
+        read_only_fields = ['created_at']
+
+class MathWorkingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MathWorkings
+        fields = '__all__'
+        read_only_fields = ['submitted_at', 'feedback']
+
+class AnswerWithWorkingsSerializer(serializers.ModelSerializer):
+    workings = MathWorkingsSerializer(many=True, required=False)
+    
+    class Meta:
+        model = Answer
+        fields = [
+            'id', 'user', 'question', 'response', 
+            'is_correct', 'workings', 'submitted_at'
+        ]
+        read_only_fields = ['user', 'is_correct', 'submitted_at']
+
+class QuestionWithWorkingsSerializer(serializers.ModelSerializer):
+    correct_workings = serializers.JSONField()
+    
+    class Meta:
+        model = Question
+        fields = [
+            'id', 'assessment', 'question_type', 'text', 
+            'options', 'correct_answer', 'correct_workings',
+            'difficulty_level', 'math_concepts'
+        ]

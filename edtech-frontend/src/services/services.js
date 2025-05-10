@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const api = axios.create({
+export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
   withCredentials: true
 });
@@ -73,8 +73,20 @@ export const authService = {
 
 // User Profile Services
 export const profileService = {
-  fetch: () => api.get('/profile/'), // Note: matches your backend URL
-  update: (data) => api.patch('/profile/', data) // Using PATCH for partial updates
+  fetch: () => api.get('/profile/'),
+  update: (formData) => {
+    const body = new FormData();
+    if (formData.first_name) body.append('first_name', formData.first_name);
+    if (formData.last_name) body.append('last_name', formData.last_name);
+    if (formData.bio) body.append('bio', formData.bio);
+    if (formData.avatar) body.append('avatar', formData.avatar);
+    
+    return api.patch('/profile/', body, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+  }
 };
 
 // Dashboard Services

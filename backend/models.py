@@ -5,7 +5,8 @@ from django.utils.translation import gettext_lazy as _
 import json
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, BaseUserManager
-
+import re
+from django.core.exceptions import ValidationError
 
 class UserProfileManager(BaseUserManager):
     def _create_user(self, email, password, **extra_fields):
@@ -168,8 +169,17 @@ class Topic(models.Model):
     title = models.CharField(max_length=200)
     order = models.PositiveIntegerField()
     content = models.TextField()
+    raw_content = models.TextField()  # Original educator input
+    formatted_content = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        if re.search(r'\d+\^\d+', self.content):
+            raise ValidationError(
+                "Tip : Math Content renders better when using LaTeX. "
+                "We have automatically formatted some elements for you."
+            )
 
     class Meta:
         ordering = ['order']
@@ -222,6 +232,22 @@ class Question(models.Model):
     difficulty = models.PositiveIntegerField(default=1)
     concept_tags = models.CharField(max_length=200)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    correct_workings = models.JSONField(
+        default=list,
+        help_text="List of correct working steps"
+    )
+    difficulty_level = models.CharField(
+        max_length=10,
+        choices=[('8th', '8th Grade'), ('9th', '9th Grade'), 
+                 ('10th', '10th Grade'), ('11th', '11th Grade'),
+                 ('12th', '12th Grade')],
+        default='10th'
+    )
+    math_concepts = models.JSONField(
+        default=list,
+        help_text="List of math concepts tested"
+    )
 
     def __str__(self):
         return f"{self.assessment.title} - {self.text[:50]}..."
@@ -341,3 +367,64 @@ class Enrollment(models.Model):
 
     class Meta:
         unique_together = ('user', 'program')
+
+
+# models.py
+class Answer(models.Model):
+    user = models.ForeignKey(UserProfile, on_delete=models.CASCADE)
+    question = models.ForeignKey(Question, on_delete=models.CASCADE)
+    response = models.TextField()
+    is_correct = models.BooleanField(default=False)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+class AnswerWorking(models.Model):
+    answer = models.ForeignKey(Answer, related_name='workings', on_delete=models.CASCADE)
+    step_number = models.PositiveIntegerField()
+    content = models.TextField()  # LaTeX formatted content
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class MathProblem(models.Model):
+    """New model to store math problems from OpenMathReasoning"""
+    original_id = models.CharField(max_length=50, unique=True)
+    text = models.TextField()
+    domain = models.CharField(max_length=50, choices=[
+        ('algebra', 'Algebra'),
+        ('geometry', 'Geometry'),
+        ('trigonometry', 'Trigonometry'),
+        ('calculus', 'Calculus'),
+        ('statistics', 'Statistics')
+    ])
+    grade_level = models.CharField(max_length=10, choices=[
+        ('8th', '8th Grade'),
+        ('9th', '9th Grade'),
+        ('10th', '10th Grade'), 
+        ('11th', '11th Grade'),
+        ('12th', '12th Grade')
+    ])
+    concepts = models.JSONField(default=list)  # List of math concepts
+    correct_answer = models.TextField()
+    correct_workings = models.JSONField(default=list)  # List of correct steps
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"{self.domain} - {self.text[:50]}..."
+    
+
+class MathWorkings(models.Model):
+    """Extended model for math workings evaluation"""
+    problem = models.ForeignKey(MathProblem, on_delete=models.CASCADE, related_name='workings')
+    steps = models.JSONField(default=list)  # User's step-by-step workings
+    answer = models.TextField()
+    is_correct = models.BooleanField(default=False)
+    confidence = models.FloatField(default=0.0)  # ML model's confidence score
+    error_types = models.JSONField(default=list)  # List of detected errors
+    submitted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    feedback = models.TextField(blank=True)
+    
+    class Meta:
+        verbose_name_plural = "Math Workings"
+    
+    def __str__(self):
+        return f"Workings for {self.problem} by {self.submitted_by}"
